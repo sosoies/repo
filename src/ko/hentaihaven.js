@@ -6,9 +6,10 @@ const mangayomiSources = [
         apiUrl: "",
         iconUrl: "https://hentaihaven.xxx/favicon.ico",
         typeSource: "single",
-        itemType: 1, // 비디오/애니메이션 타입
+        itemType: 1,
         isNsfw: true,
-        version: "0.0.5",
+        hasCloudflare: true,
+        version: "0.0.6",
         dateFormat: "",
         dateFormatLocale: "",
         pkgName: "anime/src/en/hentaihaven.js"
@@ -25,7 +26,6 @@ class DefaultExtension extends MProvider {
     getHeaders(url) {
         return {
             "Referer": this.baseUrl + "/",
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             "Accept-Language": "en-US,en;q=0.9"
         };
     }
@@ -36,19 +36,17 @@ class DefaultExtension extends MProvider {
         return this.baseUrl + (url.startsWith("/") ? url : "/" + url);
     }
 
-    // API 응답 JSON을 망가요미 목록 포맷으로 변환하는 공통 메서드
-    parseApiList(responseBody, page) {
+    parseListFromJson(responseBody, page) {
         let json;
         try {
             json = JSON.parse(responseBody);
         } catch (error) {
-            throw new Error("HentaiHaven API 응답을 파싱할 수 없습니다.");
+            throw new Error("JSON 파싱 실패");
         }
 
         const mangas = [];
         const seen = new Set();
-        // 안드로이드/웹 API 구조 대응 (data 또는 items 배열 확인)
-        const items = Array.isArray(json.data) ? json.data : (Array.isArray(json.items) ? json.items : []);
+        const items = Array.isArray(json.data) ? json.data : [];
 
         items.forEach(item => {
             if (!item || !item.slug || !item.title) return;
@@ -62,7 +60,7 @@ class DefaultExtension extends MProvider {
                 name: item.title,
                 url: url,
                 link: url,
-                imageUrl: this.absoluteUrl(item.cover_url || item.thumbnail || "")
+                imageUrl: this.absoluteUrl(item.cover_url || "")
             });
         });
 
@@ -75,25 +73,22 @@ class DefaultExtension extends MProvider {
         };
     }
 
-    // 인기 목록 (API 기반)
     async getPopular(page) {
         const url = `${this.baseUrl}/api/manga/?per_page=24&live=1&locale=en&orderby=views&order=desc&page=${page}`;
         const response = await this.client.get(url, this.getHeaders(url));
-        return this.parseApiList(response.body, page);
+        return this.parseListFromJson(response.body, page);
     }
 
     get supportsLatest() {
         return true;
     }
 
-    // 최신 업데이트 목록 (API 기반)
     async getLatestUpdates(page) {
         const url = `${this.baseUrl}/api/manga/?per_page=24&live=1&locale=en&orderby=date&order=desc&page=${page}`;
         const response = await this.client.get(url, this.getHeaders(url));
-        return this.parseApiList(response.body, page);
+        return this.parseListFromJson(response.body, page);
     }
 
-    // 검색 (API 기반)
     async search(query, page, filters) {
         const url =
             `${this.baseUrl}/api/manga/` +
@@ -102,10 +97,9 @@ class DefaultExtension extends MProvider {
             (query ? `&search=${encodeURIComponent(query.trim())}` : "");
 
         const response = await this.client.get(url, this.getHeaders(url));
-        return this.parseApiList(response.body, page);
+        return this.parseListFromJson(response.body, page);
     }
 
-    // 상세 정보 및 에피소드 목록 파싱
     async getDetail(url) {
         const fullUrl = this.absoluteUrl(url);
         const response = await this.client.get(fullUrl, this.getHeaders(fullUrl));
@@ -160,7 +154,6 @@ class DefaultExtension extends MProvider {
         };
     }
 
-    // 비디오 스트리밍 주소 추출
     async getVideoList(url) {
         const fullUrl = this.absoluteUrl(url);
         const response = await this.client.get(fullUrl, this.getHeaders(fullUrl));
@@ -169,7 +162,6 @@ class DefaultExtension extends MProvider {
         const videos = [];
         const seen = new Set();
 
-        // 비디오 태그 및 HLS 소스 탐색
         document.select("video source, source[type='application/vnd.apple.mpegurl'], iframe").forEach(element => {
             const src = element.attr("src") || element.attr("data-src");
             if (!src) return;
@@ -186,7 +178,6 @@ class DefaultExtension extends MProvider {
             });
         });
 
-        // 정규식을 통한 m3u8 / mp4 스트림 백업 탐색
         if (videos.length === 0) {
             const match = response.body.match(/https?:\/\/[^"'\s]+\.(m3u8|mp4)/i);
             if (match) {
@@ -200,7 +191,7 @@ class DefaultExtension extends MProvider {
         }
 
         if (videos.length === 0) {
-            throw new Error("이 회차의 비디오 재생 주소를 찾지 못했습니다.");
+            throw new Error("비디오 재생 주소를 찾지 못했습니다.");
         }
 
         return videos;
