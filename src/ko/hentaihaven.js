@@ -1,131 +1,327 @@
-class HentaiHavenManga extends DefaultExtension {
-    baseUrl = "https://hentaihaven.xxx";
-
-    // 인기 목록
-    async getPopular(page) {
-        const url = page > 1 ? `${this.baseUrl}/browse/trending/page/${page}/` : `${this.baseUrl}/browse/trending/`;
-        const response = await Client.get(url, { "Accept-Language": "en-US,en;q=0.9", "Referer": `${this.baseUrl}/` });
-        const document = loadHtml(response.body);
-        
-        const mangas = [];
-        document.select("a[href^='/watch/']:has(img)").forEach(element => {
-            const img = element.selectFirst("img");
-            if (img) {
-                const name = img.attr("alt");
-                const href = element.attr("href");
-                const thumb = img.attr("abs:src") || img.attr("src");
-                if (name) {
-                    mangas.push({
-                        url: href,
-                        name: name,
-                        imageUrl: thumb ? thumb.replace(" ", "%20") : ""
-                    });
-                }
-            }
-        });
-
-        const hasNextPage = document.selectFirst("nav[aria-label='Archive pages'] a[rel=next]:not([aria-disabled=true])") !== null;
-        return { list: mangas, hasNextPage: hasNextPage };
+class DefaultExtension extends MProvider {
+    constructor() {
+        super();
+        this.baseUrl = this.source.baseUrl;
+        this.client = new Client();
     }
 
-    // 최신 업데이트 목록
-    async getLatestUpdates(page) {
-        const url = page > 1 ? `${this.baseUrl}/watch/page/${page}/` : `${this.baseUrl}/watch/?sort=latest`;
-        const response = await Client.get(url);
-        const document = loadHtml(response.body);
-        const mangas = [];
-        
-        document.select("a[href^='/watch/']:has(img)").forEach(element => {
-            const img = element.selectFirst("img");
-            if (img) {
-                mangas.push({
-                    url: element.attr("href"),
-                    name: img.attr("alt"),
-                    imageUrl: img.attr("abs:src") || img.attr("src")
-                });
-            }
-        });
-        
-        return { list: mangas, hasNextPage: true };
-    }
-
-    // 검색 기능
-    async search(query, page, filters) {
-        let url = `${this.baseUrl}/api/manga/?per_page=24&live=1&locale=en&orderby=date&order=desc&page=${page}`;
-        if (query) {
-            url += `&search=${encodeURIComponent(query.trim())}`;
-        }
-        
-        const response = await Client.get(url, { "Referer": `${this.baseUrl}/` });
-        const json = JSON.parse(response.body);
-        
-        const mangas = [];
-        if (json && json.data) {
-            json.data.forEach(item => {
-                mangas.push({
-                    url: `/watch/${item.slug}/`,
-                    name: item.title,
-                    imageUrl: item.cover_url || ""
-                });
-            });
-        }
-        
-        const hasNextPage = json && json.current_page < json.total_pages;
-        return { list: mangas, hasNextPage: hasNextPage };
-    }
-
-    // 작품 상세 정보 및 챕터 목록 가져오기
-    async getDetail(url) {
-        const fullUrl = url.startsWith("http") ? url : `${this.baseUrl}${url}`;
-        const response = await Client.get(fullUrl, { "Referer": `${this.baseUrl}/` });
-        const document = loadHtml(response.body);
-
-        const title = document.selectFirst("div[data-watch-primary] h1")?.text || "";
-        const imageUrl = document.selectFirst("div[data-watch-primary] div[class*=\"aspect-[2/3]\"] img")?.attr("abs:src") || "";
-        const description = document.selectFirst("div[data-watch-primary] p.line-clamp-2")?.text || "";
-
-        // 망가요미에서는 에피소드를 챕터(Chapters) 개념으로 매핑합니다.
-        const chapters = [];
-        document.select(`a[data-episode-preview-hover][href*='episode-']`).forEach((el, index) => {
-            const epHref = el.attr("href");
-            const epName = el.selectFirst("p.font-bold")?.text || `Chapter ${index + 1}`;
-            const dateStr = el.selectFirst("p.text-zinc-400")?.text;
-            
-            chapters.push({
-                url: epHref,
-                name: epName,
-                dateUpload: dateStr ? new Date(dateStr).getTime().toString() : "",
-                chapterNumber: index + 1
-            });
-        });
-
+    getHeaders(url) {
         return {
-            url: fullUrl,
-            name: title,
-            imageUrl: imageUrl,
-            description: description,
-            chapters: chapters.reverse()
+            "Referer": this.baseUrl + "/",
+            "Accept-Language": "en-US,en;q=0.9"
         };
     }
 
-    // 만화 뷰어 내부의 페이지(이미지) 목록 가져오기
-    async getPageList(url) {
-        const fullUrl = url.startsWith("http") ? url : `${this.baseUrl}${url}`;
-        const response = await Client.get(fullUrl, { "Referer": `${this.baseUrl}/` });
-        const document = loadHtml(response.body);
+    absoluteUrl(url) {
+        if (!url) return "";
+        if (/^https?:\/\//i.test(url)) return url;
 
-        const pages = [];
-        
-        // 페이지 내 만화 이미지 요소 선택자 (사이트 구조에 맞게 조정 필요)
-        document.select("div.reader-container img, div[class*='reader'] img, img[data-pages-image]").forEach((img, index) => {
-            const imageUrl = img.attr("abs:src") || img.attr("src") || img.attr("data-src");
-            if (imageUrl) {
-                pages.push({
-                    url: imageUrl,
-                    headers: { "Referer": fullUrl }
+        return this.baseUrl + (
+            url.startsWith("/") ? url : "/" + url
+        );
+    }
+
+    getImageUrl(img) {
+        if (!img) return "";
+
+        return (
+            img.attr("data-src") ||
+            img.attr("data-lazy-src") ||
+            img.attr("data-original") ||
+            img.attr("abs:src") ||
+            img.attr("src") ||
+            ""
+        );
+    }
+
+    getTitle(element) {
+        const img = element.selectFirst("img");
+
+        return (
+            element.attr("title") ||
+            (img ? img.attr("alt") : "") ||
+            element.text ||
+            ""
+        ).trim();
+    }
+
+    extractList(document) {
+        const mangas = [];
+        const seen = new Set();
+
+        document
+            .select("a[href*='/watch/']:has(img)")
+            .forEach(element => {
+                const href = element.attr("href");
+                const img = element.selectFirst("img");
+                const name = this.getTitle(element);
+
+                if (!href || !name || !img) return;
+
+                const url = this.absoluteUrl(href);
+
+                if (seen.has(url)) return;
+                seen.add(url);
+
+                mangas.push({
+                    name: name,
+                    url: url,
+                    link: url,
+                    imageUrl: this.absoluteUrl(
+                        this.getImageUrl(img)
+                    )
                 });
-            }
+            });
+
+        return mangas;
+    }
+
+    async getPopular(page) {
+        const url = page > 1
+            ? `${this.baseUrl}/browse/trending/page/${page}/`
+            : `${this.baseUrl}/browse/trending/`;
+
+        const response = await this.client.get(
+            url,
+            this.getHeaders(url)
+        );
+
+        const document = new Document(response.body);
+        const mangas = this.extractList(document);
+
+        const next = document.selectFirst(
+            "nav[aria-label='Archive pages'] " +
+            "a[rel='next']:not([aria-disabled='true'])"
+        );
+
+        return {
+            list: mangas,
+            hasNextPage: next !== null && mangas.length > 0
+        };
+    }
+
+    get supportsLatest() {
+        return true;
+    }
+
+    async getLatestUpdates(page) {
+        const url = page > 1
+            ? `${this.baseUrl}/watch/page/${page}/`
+            : `${this.baseUrl}/watch/?sort=latest`;
+
+        const response = await this.client.get(
+            url,
+            this.getHeaders(url)
+        );
+
+        const document = new Document(response.body);
+        const mangas = this.extractList(document);
+
+        const next = document.selectFirst(
+            "a[rel='next']:not([aria-disabled='true'])"
+        );
+
+        return {
+            list: mangas,
+            hasNextPage: next !== null && mangas.length > 0
+        };
+    }
+
+    async search(query, page, filters) {
+        const url =
+            `${this.baseUrl}/api/manga/` +
+            `?per_page=24&live=1&locale=en` +
+            `&orderby=date&order=desc&page=${page}` +
+            (query
+                ? `&search=${encodeURIComponent(query.trim())}`
+                : "");
+
+        const response = await this.client.get(
+            url,
+            this.getHeaders(url)
+        );
+
+        let json;
+
+        try {
+            json = JSON.parse(response.body);
+        } catch (error) {
+            throw new Error(
+                "HentaiHaven 검색 API가 JSON을 반환하지 않았습니다."
+            );
+        }
+
+        const mangas = [];
+        const seen = new Set();
+
+        const items = Array.isArray(json.data)
+            ? json.data
+            : [];
+
+        items.forEach(item => {
+            if (!item || !item.slug || !item.title) return;
+
+            const url = this.absoluteUrl(
+                `/watch/${item.slug}/`
+            );
+
+            if (seen.has(url)) return;
+            seen.add(url);
+
+            mangas.push({
+                name: item.title,
+                url: url,
+                link: url,
+                imageUrl: this.absoluteUrl(
+                    item.cover_url || ""
+                )
+            });
         });
+
+        const currentPage = Number(json.current_page || page);
+        const totalPages = Number(json.total_pages || currentPage);
+
+        return {
+            list: mangas,
+            hasNextPage: currentPage < totalPages &&
+                mangas.length > 0
+        };
+    }
+
+    async getDetail(url) {
+        const fullUrl = this.absoluteUrl(url);
+
+        const response = await this.client.get(
+            fullUrl,
+            this.getHeaders(fullUrl)
+        );
+
+        const document = new Document(response.body);
+
+        const titleElement = document.selectFirst(
+            "div[data-watch-primary] h1"
+        );
+
+        const imageElement = document.selectFirst(
+            "div[data-watch-primary] " +
+            "div[class*='aspect-'] img"
+        );
+
+        const descriptionElement = document.selectFirst(
+            "div[data-watch-primary] p.line-clamp-2"
+        );
+
+        const title = titleElement
+            ? titleElement.text.trim()
+            : "";
+
+        const imageUrl = imageElement
+            ? this.absoluteUrl(this.getImageUrl(imageElement))
+            : "";
+
+        const description = descriptionElement
+            ? descriptionElement.text.trim()
+            : "";
+
+        const chapters = [];
+        const seen = new Set();
+
+        document
+            .select("a[data-episode-preview-hover][href*='episode-']")
+            .forEach((element, index) => {
+                const href = element.attr("href");
+
+                if (!href) return;
+
+                const chapterUrl = this.absoluteUrl(href);
+
+                if (seen.has(chapterUrl)) return;
+                seen.add(chapterUrl);
+
+                const nameElement = element.selectFirst(
+                    "p.font-bold"
+                );
+
+                const dateElement = element.selectFirst(
+                    "p.text-zinc-400"
+                );
+
+                const name = nameElement
+                    ? nameElement.text.trim()
+                    : `Episode ${index + 1}`;
+
+                const dateText = dateElement
+                    ? dateElement.text.trim()
+                    : "";
+
+                let dateUpload = "";
+
+                if (dateText) {
+                    const timestamp = Date.parse(dateText);
+
+                    if (!Number.isNaN(timestamp)) {
+                        dateUpload = String(timestamp);
+                    }
+                }
+
+                chapters.push({
+                    name: name,
+                    url: chapterUrl,
+                    dateUpload: dateUpload,
+                    chapterNumber: index + 1
+                });
+            });
+
+        // 사이트에서 최신 에피소드부터 표시한다면
+        // 오래된 에피소드부터 읽을 수 있도록 순서를 뒤집습니다.
+        chapters.reverse();
+
+        return {
+            name: title,
+            url: fullUrl,
+            imageUrl: imageUrl,
+            description: description,
+            chapters: chapters
+        };
+    }
+
+    async getPageList(url) {
+        const fullUrl = this.absoluteUrl(url);
+
+        const response = await this.client.get(
+            fullUrl,
+            this.getHeaders(fullUrl)
+        );
+
+        const document = new Document(response.body);
+        const pages = [];
+        const seen = new Set();
+
+        document
+            .select(
+                "div.reader-container img, " +
+                "div[class*='reader'] img, " +
+                "img[data-pages-image]"
+            )
+            .forEach(img => {
+                const imageUrl = this.getImageUrl(img);
+
+                if (!imageUrl) return;
+
+                const absoluteImageUrl = this.absoluteUrl(
+                    imageUrl
+                );
+
+                if (seen.has(absoluteImageUrl)) return;
+                seen.add(absoluteImageUrl);
+
+                pages.push({
+                    url: absoluteImageUrl,
+                    headers: {
+                        "Referer": fullUrl
+                    }
+                });
+            });
 
         return pages;
     }
