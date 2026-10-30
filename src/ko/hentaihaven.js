@@ -9,7 +9,7 @@ const mangayomiSources = [
         itemType: 1,
         isNsfw: true,
         hasCloudflare: true,
-        version: "0.0.7",
+        version: "1.0.1",
         dateFormat: "",
         dateFormatLocale: "",
         pkgName: "anime/src/en/hentaihaven.js"
@@ -26,6 +26,7 @@ class DefaultExtension extends MProvider {
     getHeaders(url) {
         return {
             "Referer": this.baseUrl + "/",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             "Accept-Language": "en-US,en;q=0.9"
         };
     }
@@ -58,12 +59,11 @@ class DefaultExtension extends MProvider {
         ).trim();
     }
 
-    // HTML 문서에서 애니메이션 목록을 추출하는 공통 메서드
+    // HTML 문서에서 애니메이션 목록을 안전하게 추출
     extractList(document) {
         const animes = [];
         const seen = new Set();
 
-        // 사이트 구조에 맞는 셀렉터 탐색
         document.select("a[href*='/watch/']:has(img)").forEach(element => {
             const href = element.attr("href");
             const img = element.selectFirst("img");
