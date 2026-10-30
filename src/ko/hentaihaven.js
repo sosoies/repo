@@ -8,7 +8,7 @@ const mangayomiSources = [
         typeSource: "single",
         itemType: 1,
         isNsfw: true,
-        version: "1.2.3",
+        version: "2.1.2",
         dateFormat: "",
         dateFormatLocale: "",
         pkgName: "anime/src/en/hentaihaven.js"
@@ -157,30 +157,23 @@ class DefaultExtension extends MProvider {
             if (seen.has(watchUrl)) return;
             seen.add(watchUrl);
 
-            // API에 포함된 기존 이미지 주소가 있으면 그것우선 사용, 없으면 slug 기반 표준 썸네일 경로 생성
-            let img = item.cover_url || item.poster || item.image || item.thumbnail || "";
-            if (typeof img === "object" && img !== null) {
-                img = img.url || img.path || Object.values(img)[0] || "";
-            }
-            
-            if (!img || typeof img !== "string" || img.trim() === "") {
-                img = `${this.baseUrl}/storage/galleries/${slug}/cover.jpg`;
-            }
+            const img = item.cover_url || item.poster || item.image || item.thumbnail || `${this.baseUrl}/storage/galleries/${slug}/cover.jpg`;
 
             animes.push({
                 name: String(title),
                 url: String(watchUrl),
                 link: String(watchUrl),
-                imageUrl: String(this.absoluteUrl(img))
+                imageUrl: String(this.absoluteUrl(typeof img === "object" ? (img.url || img.path || "") : img))
             });
         });
 
         const currentPage = Number(json.current_page || (json.data && json.current_page) || page);
-        const totalPages = Number(json.total_pages || json.last_page || (json.data && json.last_page) || currentPage);
+        const totalPages = Number(json.total_pages || json.last_page || (json.data && json.last_page) || 0);
+        const hasNext = totalPages > 0 ? currentPage < totalPages : items.length > 0;
 
         return {
             list: animes,
-            hasNextPage: currentPage < totalPages && animes.length > 0
+            hasNextPage: hasNext
         };
     }
 
@@ -230,29 +223,23 @@ class DefaultExtension extends MProvider {
             if (seen.has(watchUrl)) return;
             seen.add(watchUrl);
 
-            let img = item.cover_url || item.poster || item.image || item.thumbnail || "";
-            if (typeof img === "object" && img !== null) {
-                img = img.url || img.path || Object.values(img)[0] || "";
-            }
-            
-            if (!img || typeof img !== "string" || img.trim() === "") {
-                img = `${this.baseUrl}/storage/galleries/${slug}/cover.jpg`;
-            }
+            const img = item.cover_url || item.poster || item.image || item.thumbnail || `${this.baseUrl}/storage/galleries/${slug}/cover.jpg`;
 
             animes.push({
                 name: String(title),
                 url: String(watchUrl),
                 link: String(watchUrl),
-                imageUrl: String(this.absoluteUrl(img))
+                imageUrl: String(this.absoluteUrl(typeof img === "object" ? (img.url || img.path || "") : img))
             });
         });
 
         const currentPage = Number(json.current_page || (json.data && json.current_page) || page);
-        const totalPages = Number(json.total_pages || json.last_page || (json.data && json.last_page) || currentPage);
+        const totalPages = Number(json.total_pages || json.last_page || (json.data && json.last_page) || 0);
+        const hasNext = totalPages > 0 ? currentPage < totalPages : items.length > 0;
 
         return {
             list: animes,
-            hasNextPage: currentPage < totalPages && animes.length > 0
+            hasNextPage: hasNext
         };
     }
 
@@ -270,24 +257,37 @@ class DefaultExtension extends MProvider {
         const description = descriptionElement ? descriptionElement.text.trim() : "";
 
         const episodes = [];
-        const seen = new Set();
+        const seenUrls = new Set();
 
-        document.select("a[data-episode-preview-hover], a[href*='episode-'], .episode-list a").forEach((element, index) => {
+        const matchSlug = fullUrl.match(/\/watch\/([^\/]+)/);
+        const currentSlug = matchSlug ? matchSlug[1] : "";
+
+        document.select("a[href*='episode-']").forEach((element) => {
             const href = element.attr("href");
             if (!href) return;
 
             const episodeUrl = this.absoluteUrl(href);
-            if (seen.has(episodeUrl)) return;
-            seen.add(episodeUrl);
 
-            const nameElement = element.selectFirst("p.font-bold, span, div");
-            const name = nameElement ? nameElement.text.trim() : `Episode ${index + 1}`;
+            if (currentSlug && !episodeUrl.includes(`/watch/${currentSlug}/`)) {
+                return;
+            }
+
+            if (seenUrls.has(episodeUrl)) return;
+            seenUrls.add(episodeUrl);
+
+            const nameElement = element.selectFirst("p.font-bold, span, div") || element;
+            let name = nameElement ? nameElement.text.trim() : "";
+
+            if (!name || name.includes("object Object") || name.length === 0) {
+                const epMatch = episodeUrl.match(/episode-([0-9]+)/i);
+                name = epMatch ? `Episode ${epMatch[1]}` : `Episode ${episodes.length + 1}`;
+            }
 
             episodes.push({
                 name: String(name),
                 url: String(episodeUrl),
                 dateUpload: "",
-                episodeNumber: index + 1
+                episodeNumber: episodes.length + 1
             });
         });
 
@@ -319,22 +319,24 @@ class DefaultExtension extends MProvider {
         const videoUrls = [];
         const seen = new Set();
 
+        // 회차 페이지 내에서 고유한 플레이어 iframe이나 비디오 소스를 먼저 탐색
         document.select("iframe[src], source, video").forEach(el => {
             const src = el.attr("src") || el.attr("data-src");
             if (src) {
                 const videoUrl = this.absoluteUrl(src);
-                if (!seen.has(videoUrl) && !videoUrl.includes("disqus")) {
+                if (!seen.has(videoUrl) && !videoUrl.includes("disqus") && !videoUrl.includes("ads")) {
                     seen.add(videoUrl);
                     videoUrls.push(String(videoUrl));
                 }
             }
         });
 
+        // 스크립트나 플레이어 설정 내에 숨겨진 개별 에피소드 스트림 주소 정밀 추출
         const videoRegex = /https?:\/\/[^\s"'<>\\?\b]+?\.(mp4|m3u8|webm)(\?[^\s"'<>\\?\b]+)?/g;
         let match;
         while ((match = videoRegex.exec(body)) !== null) {
             let videoUrl = match[0].replace(/\\/g, "");
-            if (!seen.has(videoUrl)) {
+            if (!seen.has(videoUrl) && !videoUrl.includes("favicon") && !videoUrl.includes("logo")) {
                 seen.add(videoUrl);
                 videoUrls.push(String(videoUrl));
             }
@@ -343,7 +345,7 @@ class DefaultExtension extends MProvider {
         if (videoUrls.length === 0) {
             document.select("script").forEach(script => {
                 const scriptText = script.text;
-                const fileMatch = scriptText.match(/["'](?:file|src|url|videoUrl)["']\s*:\s*["'](https?:\/\/[^"']+\.(mp4|m3u8)[^"']*)["']/i);
+                const fileMatch = scriptText.match(/["'](?:file|src|url|videoUrl|source)["']\s*:\s*["'](https?:\/\/[^"']+\.(mp4|m3u8)[^"']*)["']/i);
                 if (fileMatch && fileMatch[1]) {
                     const streamUrl = fileMatch[1].replace(/\\/g, "");
                     if (!seen.has(streamUrl)) {
@@ -355,7 +357,7 @@ class DefaultExtension extends MProvider {
         }
 
         if (videoUrls.length === 0) {
-            throw new Error("비디오 재생 주소를 찾지 못했습니다.");
+            throw new Error("이 회차의 고유 비디오 주소를 찾지 못했습니다.");
         }
 
         let finalVideos = [];
