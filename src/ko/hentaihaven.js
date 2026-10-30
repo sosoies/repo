@@ -1,12 +1,13 @@
-class HentaiHaven extends DefaultExtension {
+class HentaiHavenManga extends DefaultExtension {
     baseUrl = "https://hentaihaven.xxx";
 
+    // 인기 목록
     async getPopular(page) {
         const url = page > 1 ? `${this.baseUrl}/browse/trending/page/${page}/` : `${this.baseUrl}/browse/trending/`;
         const response = await Client.get(url, { "Accept-Language": "en-US,en;q=0.9", "Referer": `${this.baseUrl}/` });
         const document = loadHtml(response.body);
         
-        const animes = [];
+        const mangas = [];
         document.select("a[href^='/watch/']:has(img)").forEach(element => {
             const img = element.selectFirst("img");
             if (img) {
@@ -14,7 +15,7 @@ class HentaiHaven extends DefaultExtension {
                 const href = element.attr("href");
                 const thumb = img.attr("abs:src") || img.attr("src");
                 if (name) {
-                    animes.push({
+                    mangas.push({
                         url: href,
                         name: name,
                         imageUrl: thumb ? thumb.replace(" ", "%20") : ""
@@ -24,19 +25,20 @@ class HentaiHaven extends DefaultExtension {
         });
 
         const hasNextPage = document.selectFirst("nav[aria-label='Archive pages'] a[rel=next]:not([aria-disabled=true])") !== null;
-        return { list: animes, hasNextPage: hasNextPage };
+        return { list: mangas, hasNextPage: hasNextPage };
     }
 
+    // 최신 업데이트 목록
     async getLatestUpdates(page) {
         const url = page > 1 ? `${this.baseUrl}/watch/page/${page}/` : `${this.baseUrl}/watch/?sort=latest`;
         const response = await Client.get(url);
         const document = loadHtml(response.body);
-        const animes = [];
+        const mangas = [];
         
         document.select("a[href^='/watch/']:has(img)").forEach(element => {
             const img = element.selectFirst("img");
             if (img) {
-                animes.push({
+                mangas.push({
                     url: element.attr("href"),
                     name: img.attr("alt"),
                     imageUrl: img.attr("abs:src") || img.attr("src")
@@ -44,9 +46,10 @@ class HentaiHaven extends DefaultExtension {
             }
         });
         
-        return { list: animes, hasNextPage: true };
+        return { list: mangas, hasNextPage: true };
     }
 
+    // 검색 기능
     async search(query, page, filters) {
         let url = `${this.baseUrl}/api/manga/?per_page=24&live=1&locale=en&orderby=date&order=desc&page=${page}`;
         if (query) {
@@ -56,10 +59,10 @@ class HentaiHaven extends DefaultExtension {
         const response = await Client.get(url, { "Referer": `${this.baseUrl}/` });
         const json = JSON.parse(response.body);
         
-        const animes = [];
+        const mangas = [];
         if (json && json.data) {
             json.data.forEach(item => {
-                animes.push({
+                mangas.push({
                     url: `/watch/${item.slug}/`,
                     name: item.title,
                     imageUrl: item.cover_url || ""
@@ -68,9 +71,10 @@ class HentaiHaven extends DefaultExtension {
         }
         
         const hasNextPage = json && json.current_page < json.total_pages;
-        return { list: animes, hasNextPage: hasNextPage };
+        return { list: mangas, hasNextPage: hasNextPage };
     }
 
+    // 작품 상세 정보 및 챕터 목록 가져오기
     async getDetail(url) {
         const fullUrl = url.startsWith("http") ? url : `${this.baseUrl}${url}`;
         const response = await Client.get(fullUrl, { "Referer": `${this.baseUrl}/` });
@@ -80,17 +84,18 @@ class HentaiHaven extends DefaultExtension {
         const imageUrl = document.selectFirst("div[data-watch-primary] div[class*=\"aspect-[2/3]\"] img")?.attr("abs:src") || "";
         const description = document.selectFirst("div[data-watch-primary] p.line-clamp-2")?.text || "";
 
-        const episodes = [];
+        // 망가요미에서는 에피소드를 챕터(Chapters) 개념으로 매핑합니다.
+        const chapters = [];
         document.select(`a[data-episode-preview-hover][href*='episode-']`).forEach((el, index) => {
             const epHref = el.attr("href");
-            const epName = el.selectFirst("p.font-bold")?.text || `Episode ${index + 1}`;
+            const epName = el.selectFirst("p.font-bold")?.text || `Chapter ${index + 1}`;
             const dateStr = el.selectFirst("p.text-zinc-400")?.text;
             
-            episodes.push({
+            chapters.push({
                 url: epHref,
                 name: epName,
                 dateUpload: dateStr ? new Date(dateStr).getTime().toString() : "",
-                episodeNumber: index + 1
+                chapterNumber: index + 1
             });
         });
 
@@ -99,35 +104,29 @@ class HentaiHaven extends DefaultExtension {
             name: title,
             imageUrl: imageUrl,
             description: description,
-            episodes: episodes.reverse()
+            chapters: chapters.reverse()
         };
     }
 
-    async getVideoList(url) {
+    // 만화 뷰어 내부의 페이지(이미지) 목록 가져오기
+    async getPageList(url) {
         const fullUrl = url.startsWith("http") ? url : `${this.baseUrl}${url}`;
-        const response = await Client.get(fullUrl);
+        const response = await Client.get(fullUrl, { "Referer": `${this.baseUrl}/` });
         const document = loadHtml(response.body);
 
-        let playlistUrl = document.selectFirst("video source[type='application/vnd.apple.mpegurl']")?.attr("abs:src") 
-            || document.selectFirst("source[data-hhaven-indexable-source]")?.attr("abs:src");
+        const pages = [];
+        
+        // 페이지 내 만화 이미지 요소 선택자 (사이트 구조에 맞게 조정 필요)
+        document.select("div.reader-container img, div[class*='reader'] img, img[data-pages-image]").forEach((img, index) => {
+            const imageUrl = img.attr("abs:src") || img.attr("src") || img.attr("data-src");
+            if (imageUrl) {
+                pages.push({
+                    url: imageUrl,
+                    headers: { "Referer": fullUrl }
+                });
+            }
+        });
 
-        if (!playlistUrl) {
-            document.select("script[type='application/ld+json']").forEach(script => {
-                try {
-                    const json = JSON.parse(script.html());
-                    if (json.video || json.contentUrl) {
-                        playlistUrl = json.contentUrl || json.video;
-                    }
-                } catch (e) {}
-            });
-        }
-
-        if (!playlistUrl) return [];
-
-        return [{
-            url: playlistUrl,
-            quality: "HLS Stream",
-            headers: { "Referer": fullUrl }
-        }];
+        return pages;
     }
 }
