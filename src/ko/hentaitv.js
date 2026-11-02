@@ -1,3 +1,4 @@
+
 const mangayomiSources = [
     {
         name: "Hentai.tv",
@@ -60,7 +61,6 @@ class DefaultExtension extends MProvider {
         return pageUrl.substring(0, pageUrl.lastIndexOf("/") + 1) + value;
     }
 
-    // Accept either a URL string or an anime object.
     getSeriesUrl(value) {
         if (typeof value === "string") {
             return value;
@@ -216,27 +216,31 @@ class DefaultExtension extends MProvider {
     // PAGINATION
     // =========================================================
 
-    hasNextPage(document, page) {
-        let found = false;
+    getPageNumber(document) {
+        const links = document.select("a[href]");
 
-        document.select("a[href]").forEach(el => {
+        let maxPage = 1;
+
+        links.forEach(el => {
             const href = el.attr("href") || "";
-
             const match = href.match(/[?&]page=(\d+)/);
 
-            if (match && Number(match[1]) === page + 1) {
-                found = true;
-            }
-
-            if (
-                el.attr("rel") === "next" ||
-                el.attr("aria-label")?.toLowerCase().includes("next")
-            ) {
-                found = true;
+            if (match) {
+                maxPage = Math.max(maxPage, Number(match[1]));
             }
         });
 
-        return found;
+        return maxPage;
+    }
+
+    hasNextPage(document, page) {
+        const next = document.selectFirst(
+            'a[rel="next"], a.next, .pagination a.next'
+        );
+
+        if (next) return true;
+
+        return this.getPageNumber(document) > page;
     }
 
     // =========================================================
@@ -246,9 +250,10 @@ class DefaultExtension extends MProvider {
     async getSeriesListing(sort, page) {
         const url =
             this.baseUrl +
-            "/series?sort=" +
+            "/series/?sort=" +
             encodeURIComponent(sort) +
-            (page > 1 ? "&page=" + page : "");
+            "&page=" +
+            page;
 
         const response = await this.fetchPage(url);
         const document = new Document(response.body);
@@ -256,44 +261,40 @@ class DefaultExtension extends MProvider {
         const result = [];
         const seen = new Set();
 
-        document.select("a.cat-card[href^='/series/']").forEach(card => {
-            const href = card.attr("href");
+        document.select("a[href*='/series/']").forEach(el => {
+            const href = el.attr("href") || "";
+            const match = href.match(/\/series\/([^/?#]+)/);
 
-            if (!href) return;
+            if (!match) return;
 
-            const fullUrl = this.absoluteUrl(href, url);
-            const slug = fullUrl
-                .split("/series/")[1]
-                ?.split(/[?#/]/)[0];
+            const slug = match[1];
 
-            if (!slug || seen.has(slug)) return;
+            if (seen.has(slug)) return;
 
             seen.add(slug);
 
-            const title =
-                card.selectFirst(".cat-title")?.text.trim() ||
-                card.selectFirst("img")?.attr("alt") ||
-                slug;
-
-            const img = card.selectFirst(
-                "img.poster-img, img"
-            );
+            const container = el.parent || el;
 
             const image =
-                img?.attr("data-src") ||
-                img?.attr("data-lazy-src") ||
-                img?.attr("src") ||
-                "";
+                el.selectFirst("img") ||
+                container.selectFirst("img");
 
-            const description =
-                card.selectFirst(".cat-desc")?.text.trim() || "";
+            const title =
+                el.attr("title") ||
+                image?.attr("alt") ||
+                el.text.trim() ||
+                slug.replace(/-/g, " ");
 
             result.push({
                 name: title,
                 url: this.baseUrl + "/series/" + slug,
                 link: this.baseUrl + "/series/" + slug,
-                imageUrl: this.absoluteUrl(image, url),
-                description: description
+                imageUrl: this.absoluteUrl(
+                    image?.attr("data-src") ||
+                    image?.attr("src") ||
+                    ""
+                ),
+                description: ""
             });
         });
 
@@ -497,9 +498,13 @@ class DefaultExtension extends MProvider {
         const payload = this.extractFlightPayload(response.body);
         const payloadVideos = this.extractPayloadVideos(payload);
 
+        const title =
+            document.selectFirst("h1.genre-name")?.text.trim() || "";
+
         const diagnostics = {
             requestedSlug: slug,
-            htmlLength: response.body.length,
+            httpStatus: response.statusCode ?? "unknown",
+            htmlLength: String(response.body || "").length,
             flightPayloadLength: payload.length,
             payloadVideoCount: payloadVideos.length,
             payloadTitleSlugs: [...new Set(
@@ -511,40 +516,39 @@ class DefaultExtension extends MProvider {
             apiError: ""
         };
 
-        let episodes = payloadVideos.filter(
-            video => video.titleSlug === slug
+        let episodes = payloadVideos.filter(video =>
+            String(video.titleSlug).toLowerCase() === String(slug).toLowerCase()
         );
 
-        // API fallback if the page does not contain matching episode objects.
         if (episodes.length === 0) {
-            diagnostics.apiAttempted = true;
-
-            const title =
-                document.selectFirst("h1.genre-name")?.text.trim() ||
-                slug.replace(/-/g, " ");
+            const searchTitle = title || slug.replace(/-/g, " ");
 
             const searchUrl =
                 this.apiUrl +
                 "/search?q=" +
-                encodeURIComponent(title) +
+                encodeURIComponent(searchTitle) +
                 "&limit=100";
+
+            diagnostics.apiAttempted = true;
 
             try {
                 const data = await this.fetchJson(searchUrl);
+
                 const apiVideos = data.videos
                     .map(video => this.normalizeVideo(video))
                     .filter(Boolean);
 
                 diagnostics.apiVideoCount = apiVideos.length;
+
                 diagnostics.apiTitleSlugs = [...new Set(
                     apiVideos.map(video => video.titleSlug).filter(Boolean)
                 )].slice(0, 20);
 
-                episodes = apiVideos.filter(
-                    video => video.titleSlug === slug
+                episodes = apiVideos.filter(video =>
+                    String(video.titleSlug).toLowerCase() === String(slug).toLowerCase()
                 );
-            } catch (e) {
-                diagnostics.apiError = String(e?.message || e);
+            } catch (error) {
+                diagnostics.apiError = String(error?.message || error);
             }
         }
 
@@ -556,11 +560,11 @@ class DefaultExtension extends MProvider {
             }
         }
 
+        diagnostics.matchedEpisodeCount = unique.size;
+
         return {
             slug: slug,
-            title:
-                document.selectFirst("h1.genre-name")?.text.trim() ||
-                "",
+            title: title,
             image:
                 document.selectFirst('meta[property="og:image"]')
                     ?.attr("content") || "",
@@ -618,23 +622,63 @@ class DefaultExtension extends MProvider {
             )
         ];
 
+        const diagnosticLines = episodes.length === 0 && page.diagnostics
+            ? [
+                "[Hentai.tv diagnostic]",
+                "Requested slug: " + page.diagnostics.requestedSlug,
+                "HTTP status: " + page.diagnostics.httpStatus,
+                "HTML length: " + page.diagnostics.htmlLength,
+                "Flight payload length: " + page.diagnostics.flightPayloadLength,
+                "Payload video count: " + page.diagnostics.payloadVideoCount,
+                "Payload titleSlug values: " +
+                    (page.diagnostics.payloadTitleSlugs.join(", ") || "(none)"),
+                "API attempted: " + page.diagnostics.apiAttempted,
+                "API video count: " + page.diagnostics.apiVideoCount,
+                "API titleSlug values: " +
+                    (page.diagnostics.apiTitleSlugs.join(", ") || "(none)"),
+                "API error: " + (page.diagnostics.apiError || "(none)"),
+                "Matched episodes: " + page.diagnostics.matchedEpisodeCount
+            ]
+            : [];
+
         const description = [
             first?.description || "",
             "Episodes: " + episodes.length,
             brands.length ? "Studio: " + brands.join(", ") : "",
-            tags.length ? "Genres: " + tags.join(", ") : ""
+            tags.length ? "Genres: " + tags.join(", ") : "",
+            ...diagnosticLines
         ].filter(Boolean).join("\n\n");
 
-        return {
-            name: page.title || first?.title || slug,
-            url: fullUrl,
-            link: fullUrl,
-            imageUrl: this.absoluteUrl(image),
-            description: description,
-            episodes: [],
-            chapters: []
-        };
-    }
+        const chapters = episodes.slice().reverse().map((video, index) => {
+            const number = video.ep ?? (episodes.length - index);
+
+            const metadata = [
+                video.quality,
+                video.language,
+                video.duration,
+                video.censored === true ? "Censored" :
+                    video.censored === false ? "Uncensored" : ""
+            ].filter(Boolean).join(" • ");
+
+           return {
+    name: video.title || "Episode " + number,
+    url: this.baseUrl + "/hentai/" + video.slug,
+    dateUpload: "0",
+    scanlator: metadata,
+    description: video.description || "",
+    thumbnailUrl: this.absoluteUrl(
+        video.thumb || video.cover
+    )
+};        });
+
+return {
+    name: page.title || first?.title || slug,
+    url: fullUrl,
+    link: fullUrl,
+    imageUrl: this.absoluteUrl(image),
+    description: description,
+    episodes: chapters
+};    }
 
     // =========================================================
     // EPISODE LIST
@@ -654,19 +698,8 @@ class DefaultExtension extends MProvider {
         const page = await this.getSeriesPage(slug);
 
         if (page.episodes.length === 0) {
-            const d = page.diagnostics || {};
-
             throw new Error(
-                "No episodes found for series: " + slug +
-                "\nURL: " + fullUrl +
-                "\nHTML length: " + (d.htmlLength ?? "unknown") +
-                "\nFlight payload length: " + (d.flightPayloadLength ?? "unknown") +
-                "\nPayload video count: " + (d.payloadVideoCount ?? "unknown") +
-                "\nPayload titleSlugs: " + JSON.stringify(d.payloadTitleSlugs || []) +
-                "\nAPI attempted: " + (d.apiAttempted ?? "unknown") +
-                "\nAPI video count: " + (d.apiVideoCount ?? "unknown") +
-                "\nAPI titleSlugs: " + JSON.stringify(d.apiTitleSlugs || []) +
-                "\nAPI error: " + (d.apiError || "none")
+                "No episodes found for series: " + slug
             );
         }
 
@@ -695,7 +728,7 @@ class DefaultExtension extends MProvider {
             return {
                 name: video.title || "Episode " + label,
                 url: this.baseUrl + "/hentai/" + video.slug,
-                dateUpload: 0,
+                dateUpload: "0",
                 episodeNumber: number,
                 scanlator: metadata,
                 description: video.description || "",
@@ -705,7 +738,6 @@ class DefaultExtension extends MProvider {
             };
         });
 
-        // Mangayomi displays the newest episode first.
         return result.reverse();
     }
 
