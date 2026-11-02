@@ -2,10 +2,10 @@
 const mangayomiSources = [
     {
         name: "Hentai.tv",
-        lang: "en",
+        lang: "ko",
         baseUrl: "https://hentai.tv",
         apiUrl: "https://hentai.tv/api",
-        iconUrl: "https://hentai.tv/wp-content/uploads/2020/10/cropped-favicon-32x32.png",
+        iconUrl: "https://www.google.com/s2/favicons?sz=256&domain=https://hentai.tv,
         typeSource: "single",
         itemType: 1,
         isNsfw: true,
