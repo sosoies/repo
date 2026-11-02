@@ -1,7 +1,7 @@
 const mangayomiSources = [
     {
         name: "HentaiHaven",
-        lang: "en",
+        lang: "ko",
         baseUrl: "https://hentaihaven.xxx",
         apiUrl: "",
         iconUrl: "https://hentaihaven.xxx/favicon.ico",
