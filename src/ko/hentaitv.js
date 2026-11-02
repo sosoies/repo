@@ -5,7 +5,7 @@ const mangayomiSources = [
         lang: "ko",
         baseUrl: "https://hentai.tv",
         apiUrl: "https://hentai.tv/api",
-        iconUrl: "https://www.google.com/s2/favicons?sz=256&domain=https://hentai.tv,
+        iconUrl: "https://www.google.com/s2/favicons?sz=256&domain=https://hentai.tv",
         typeSource: "single",
         itemType: 1,
         isNsfw: true,
