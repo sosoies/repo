@@ -8,7 +8,7 @@ const mangayomiSources = [
         typeSource: "single",
         itemType: 1,
         isNsfw: true,
-        version: "2.1.2",
+        version: "1.0.0",
         dateFormat: "",
         dateFormatLocale: "",
         pkgName: "anime/src/en/hentaihaven.js"
