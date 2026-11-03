@@ -481,115 +481,66 @@ const imageUrl = this.getItemImage(item);
         };
     }
 
-    async getVideoList(url) {
-        const fullUrl = this.absoluteUrl(url);
 
-        const response = await this.client.get(
-            fullUrl,
-            this.getHeaders(fullUrl)
-        );
 
-        const body = response.body;
-        const document = new Document(body);
+async getVideoList(url) {
+    const fullUrl = this.absoluteUrl(url);
 
-        const videoUrls = [];
-        const seen = new Set();
+    const response = await this.client.get(
+        fullUrl,
+        this.getHeaders(fullUrl)
+    );
 
-        document.select("iframe[src], source, video").forEach(el => {
-            const src = el.attr("src") || el.attr("data-src");
+    const body = response.body.replace(/\\\//g, "/");
 
-            if (!src) return;
+    const videoUrls = [];
+    const seen = new Set();
 
-            const videoUrl = this.absoluteUrl(src);
+    // 기존에 정상적으로 찾던 playlist.m3u8 주소 추출
+    const urlRegex = /https?:\/\/[^\s"'<>\\]+/g;
+    let match;
 
-            if (
-                !seen.has(videoUrl) &&
-                !videoUrl.includes("disqus") &&
-                !videoUrl.includes("ads")
-            ) {
-                seen.add(videoUrl);
-                videoUrls.push(String(videoUrl));
-            }
-        });
+    while ((match = urlRegex.exec(body)) !== null) {
+        const candidate = match[0]
+            .replace(/[),;]+$/g, "")
+            .replace(/&amp;/g, "&");
 
-        const videoRegex =
-            /https?:\/\/[^\s"'<>\\]+?\.(mp4|m3u8|webm)(\?[^\s"'<>\\]*)?/g;
+        if (
+            /^https:\/\/octopusmanifest\.org\/[^/]+\/playlist(?:_vp9)?\.m3u8(?:\?.*)?$/i.test(candidate)
+        ) {
+            const vp9Url = candidate.replace(
+                /\/playlist(?:_vp9)?\.m3u8(?=\?|$)/i,
+                "/playlist_vp9.m3u8"
+            );
 
-        let match;
-
-        while ((match = videoRegex.exec(body)) !== null) {
-            const videoUrl = match[0].replace(/\\/g, "");
-
-            if (
-                !seen.has(videoUrl) &&
-                !videoUrl.includes("favicon") &&
-                !videoUrl.includes("logo")
-            ) {
-                seen.add(videoUrl);
-                videoUrls.push(String(videoUrl));
+            if (!seen.has(vp9Url)) {
+                seen.add(vp9Url);
+                videoUrls.push(vp9Url);
             }
         }
-
-        if (videoUrls.length === 0) {
-            document.select("script").forEach(script => {
-                const scriptText = script.text;
-
-                const fileMatch = scriptText.match(
-                    /["'](?:file|src|url|videoUrl|source)["']\s*:\s*["'](https?:\/\/[^"']+\.(?:mp4|m3u8)[^"']*)["']/i
-                );
-
-                if (fileMatch && fileMatch[1]) {
-                    const streamUrl = fileMatch[1].replace(/\\/g, "");
-
-                    if (!seen.has(streamUrl)) {
-                        seen.add(streamUrl);
-                        videoUrls.push(String(streamUrl));
-                    }
-                }
-            });
-        }
-
-        if (videoUrls.length === 0) {
-            throw new Error("이 회차의 고유 비디오 주소를 찾지 못했습니다.");
-        }
-
-        const finalVideos = [];
-
-        for (const vUrl of videoUrls) {
-            let addedHls = false;
-
-            if (vUrl.includes(".m3u8")) {
-                try {
-                    const hlsList = await this.hlsVideos(
-                        vUrl,
-                        q => `HentaiHaven - ${q}`
-                    );
-
-                    if (hlsList && hlsList.length > 0) {
-                        finalVideos.push(...hlsList);
-                        addedHls = true;
-                    }
-                } catch (e) {
-                    addedHls = false;
-                }
-            }
-
-            if (!addedHls) {
-                finalVideos.push({
-                    url: String(vUrl),
-                    originalUrl: String(vUrl),
-                    quality: vUrl.includes(".m3u8")
-                        ? "HLS Master"
-                        : "Default Video",
-                    headers: this.getHeaders(fullUrl)
-                });
-            }
-        }
-
-        return finalVideos;
     }
 
-    async hlsVideos(url, qualityName) {
+    if (videoUrls.length === 0) {
+        throw new Error("HLS 마스터 플레이리스트 주소를 찾지 못했습니다.");
+    }
+
+    const finalVideos = [];
+
+    for (const vUrl of videoUrls) {
+        const hlsList = await this.hlsVideos(
+            vUrl,
+            q => `HentaiHaven - ${q}`
+        );
+
+        if (hlsList && hlsList.length > 0) {
+            finalVideos.push(...hlsList);
+        }
+    }
+
+    return finalVideos;
+}
+
+ async hlsVideos(url, qualityName) {
         const originMatch = url.match(/^(https?:\/\/[^\/]+)/);
 
         if (!originMatch) {
@@ -642,12 +593,12 @@ const imageUrl = this.getItemImage(item);
 
             if (!uri) continue;
 
-            const rendition = {
-                file: resolve(uri, url),
-                label: name,
-                groupId: groupId
-            };
-
+const rendition = {
+    file: resolve(uri, url),
+    label: name,
+    language: attributes.LANGUAGE || "",
+    groupId: groupId
+};
             if (type === "AUDIO") {
                 audios.push(rendition);
             } else if (type === "SUBTITLES") {
@@ -697,12 +648,9 @@ const imageUrl = this.getItemImage(item);
 
             if (!streamUrl) continue;
 
-            const quality = [
-                height
-                    ? `${nearestQuality(height)} (${resolution})`
-                    : "",
-                formatSize(bandwidth)
-            ].filter(Boolean).join(" - ") || "Video";
+const quality = height
+    ? `${nearestQuality(height)} (${resolution})`
+    : "Video";
 
             let selectedAudios = audios;
             let selectedSubtitles = subtitles;
@@ -725,11 +673,11 @@ const imageUrl = this.getItemImage(item);
                 label: item.label
             }));
 
-            const subtitleList = selectedSubtitles.map(item => ({
-                file: item.file,
-                label: item.label
-            }));
-
+const subtitleList = selectedSubtitles.map(item => ({
+    file: item.file,
+    label: item.label,
+    language: item.language
+}));
             videos.push({
                 bandwidth: bandwidth,
                 video: {
@@ -752,10 +700,16 @@ const imageUrl = this.getItemImage(item);
         return [];
     }
 
-    getFilterList() {
-        return [];
-    }
+getFilterList() {
+    return [
+        {
+            type_name: "HeaderFilter",
+            name: "HentaiHaven Filter"
+        }
+    ];
 }
+
+} // DefaultExtension 클래스 종료
 
 function parseHlsAttributes(text) {
     const result = {};
