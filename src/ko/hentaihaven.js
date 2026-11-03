@@ -79,21 +79,16 @@ getItemImage(item) {
     if (!item) return "";
 
     const meta = item.meta || {};
-    const thumbnail = meta["vraven-remote-thumbnail"];
+    const metaValues = Object.values(meta);
 
-    if (typeof thumbnail === "string" && thumbnail.trim()) {
-        const path = thumbnail.trim();
+    const thumbnail = metaValues.find(value =>
+        typeof value === "string" &&
+        /^images\//i.test(value.trim())
+    );
 
-        if (/^https?:\/\//i.test(path)) {
-            return path;
-        }
-
-        if (path.startsWith("//")) {
-            return "https:" + path;
-        }
-
+    if (thumbnail) {
         return "https://img.hentaihaven.xxx/" +
-            path.replace(/^\/+/, "");
+            thumbnail.trim().replace(/^\/+/, "");
     }
 
     const fields = [
@@ -132,7 +127,6 @@ getItemImage(item) {
 
     return "";
 }
-
     extractList(document) {
         const animes = [];
         const seen = new Set();
@@ -256,7 +250,7 @@ getItemImage(item) {
             if (seen.has(watchUrl)) return;
             seen.add(watchUrl);
 
-            const imageUrl = this.getItemImage(item);
+const imageUrl = this.getItemImage(item);
 
             animes.push({
                 name: String(title),
