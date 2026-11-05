@@ -9,7 +9,7 @@ const mangayomiSources = [
         typeSource: "single",
         itemType: 1,
         isNsfw: true,
-        version: "1.2.1",
+        version: "1.0.0",
         dateFormat: "",
         dateFormatLocale: "",
         pkgName: "anime/src/en/hentaitv.js"
